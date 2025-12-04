@@ -6,8 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import cv2
-from skimage import transform as sktf
-from skimage import color as skcol
 
 # ================== Benchmark knobs (defaults) ==================
 DEFAULT_N_WARMUP = 20
@@ -60,21 +58,6 @@ def opencv_resize(img: np.ndarray, dtype=DTYPE) -> np.ndarray:
     return resized.astype(dtype, copy=False)
 
 
-def skimage_resize(img: np.ndarray, dtype=DTYPE) -> np.ndarray:
-    """
-    img: float32/float64 RGB in [0,1]
-    Returns resized RGB in dtype.
-    """
-    resized = sktf.resize(
-        img,
-        (target_size[0], target_size[1], 3),
-        order=1,
-        anti_aliasing=False,   # match INTER_LINEAR style
-        preserve_range=True,
-    )
-    return resized.astype(dtype, copy=False)
-
-
 # ================== Building blocks: YUV conversion only ==================
 def opencv_yuv(img: np.ndarray) -> np.ndarray:
     """
@@ -82,16 +65,6 @@ def opencv_yuv(img: np.ndarray) -> np.ndarray:
     Uses OpenCV's cvtColor.
     """
     return cv2.cvtColor(img, cv2.COLOR_RGB2YUV)
-
-
-def skimage_yuv(img: np.ndarray, dtype=DTYPE) -> np.ndarray:
-    """
-    img: RGB in [0,1], dtype float32 or float64
-    Uses skimage's internal rgb2yuv.
-    Returns cast to dtype for fair comparison.
-    """
-    yuv64 = skcol.rgb2yuv(img.astype(np.float32, copy=False))
-    return yuv64.astype(dtype, copy=False)
 
 
 # ================== End-to-end pipelines ==================
@@ -104,29 +77,11 @@ def opencv_pipeline_real(img: np.ndarray) -> np.ndarray:
     return yuv.astype(DTYPE, copy=False)
 
 
-def skimage_pipeline_real(img: np.ndarray) -> np.ndarray:
-    """
-    Realistic scikit-image: resize + skimage YUV (internal mechanism).
-    """
-    rgb_resized = skimage_resize(img, dtype=DTYPE)
-    yuv = skimage_yuv(rgb_resized, dtype=DTYPE)
-    return yuv
-
-
 def opencv_pipeline_controlled(img: np.ndarray) -> np.ndarray:
     """
     Controlled: OpenCV resize + COMMON RGB->YUV.
     """
     rgb_resized = opencv_resize(img, dtype=DTYPE)
-    yuv = rgb2yuv_common(rgb_resized)
-    return yuv
-
-
-def skimage_pipeline_controlled(img: np.ndarray) -> np.ndarray:
-    """
-    Controlled: skimage resize + COMMON RGB->YUV.
-    """
-    rgb_resized = skimage_resize(img, dtype=DTYPE)
     yuv = rgb2yuv_common(rgb_resized)
     return yuv
 
@@ -140,7 +95,7 @@ def time_distribution(
 ) -> np.ndarray:
     """
     Returns an array of per-run times (seconds) to compute
-    mean, std.dev, and boxplots.
+    mean, std.dev, and distributions.
     Timing does NOT include any file I/O.
     """
     # Warm-up
@@ -173,7 +128,7 @@ def log_print(msg: str, fh):
 if __name__ == "__main__":
     # ---------- CLI args ----------
     parser = argparse.ArgumentParser(
-        description="CE-style OpenCV vs scikit-image benchmark"
+        description="CE-style OpenCV benchmark (4K -> 640x360 + RGB->YUV)"
     )
     parser.add_argument(
         "--warmup",
@@ -190,12 +145,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     N_WARMUP = args.warmup
-    N_RUNS = args.runs
+    N_RUNS   = args.runs
 
     # ---------- Paths ----------
-    results_txt = Path("results.txt")
-    timings_csv = Path("timings.csv")
-    summary_csv = Path("summary.csv")
+    results_txt = Path("results_opencv.txt")
+    timings_csv = Path("timings_opencv.csv")
+    summary_csv = Path("summary_opencv.csv")
+
+    # Init/refresh output files (truncate or create empty)
+    for p in (results_txt, timings_csv, summary_csv):
+        p.write_text("", encoding="utf-8")
 
     img_in = img_rgb_f.astype(DTYPE)
 
@@ -208,24 +167,15 @@ if __name__ == "__main__":
         times_cv_resize = time_distribution(
             opencv_resize, img_in, n_warmup=N_WARMUP, n_runs=N_RUNS
         )
-        times_ski_resize = time_distribution(
-            skimage_resize, img_in, n_warmup=N_WARMUP, n_runs=N_RUNS
-        )
-
         times_cv_resize_ms = times_cv_resize * 1e3
-        times_ski_resize_ms = times_ski_resize * 1e3
 
         mean_cv_r = float(np.mean(times_cv_resize_ms))
-        std_cv_r = float(np.std(times_cv_resize_ms))
+        std_cv_r  = float(np.std(times_cv_resize_ms))
 
-        mean_ski_r = float(np.mean(times_ski_resize_ms))
-        std_ski_r = float(np.std(times_ski_resize_ms))
-
-        log_print("\n=== Resize-only (4K -> 640x360 RGB) ===", f_out)
+        log_print("\n=== Resize-only (4K -> 640x360 RGB, OpenCV) ===", f_out)
         log_print(f"{'Lib':<12} {'mean [ms]':>12} {'std [ms]':>12}", f_out)
         log_print("-" * 40, f_out)
         log_print(f"{'OpenCV':<12} {mean_cv_r:12.3f} {std_cv_r:12.3f}", f_out)
-        log_print(f"{'skimage':<12} {mean_ski_r:12.3f} {std_ski_r:12.3f}", f_out)
 
         # ---------- 2) YUV-only timing ----------
         rgb_common = opencv_resize(img_in)  # reference resized RGB
@@ -233,129 +183,70 @@ if __name__ == "__main__":
         times_cv_yuv = time_distribution(
             opencv_yuv, rgb_common, n_warmup=N_WARMUP, n_runs=N_RUNS
         )
-        times_ski_yuv = time_distribution(
-            skimage_yuv, rgb_common, n_warmup=N_WARMUP, n_runs=N_RUNS
-        )
-
         times_cv_yuv_ms = times_cv_yuv * 1e3
-        times_ski_yuv_ms = times_ski_yuv * 1e3
 
         mean_cv_y = float(np.mean(times_cv_yuv_ms))
-        std_cv_y = float(np.std(times_cv_yuv_ms))
+        std_cv_y  = float(np.std(times_cv_yuv_ms))
 
-        mean_ski_y = float(np.mean(times_ski_yuv_ms))
-        std_ski_y = float(np.std(times_ski_yuv_ms))
-
-        log_print("\n=== YUV-only (RGB 640x360 -> YUV) ===", f_out)
+        log_print("\n=== YUV-only (RGB 640x360 -> YUV, OpenCV) ===", f_out)
         log_print(f"{'Lib':<12} {'mean [ms]':>12} {'std [ms]':>12}", f_out)
         log_print("-" * 40, f_out)
         log_print(f"{'OpenCV':<12} {mean_cv_y:12.3f} {std_cv_y:12.3f}", f_out)
-        log_print(f"{'skimage':<12} {mean_ski_y:12.3f} {std_ski_y:12.3f}", f_out)
 
-        # ---------- 3) End-to-end (Realistic) pipelines ----------
+        # ---------- 3) End-to-end (Realistic) pipeline ----------
         times_cv_real = time_distribution(
             opencv_pipeline_real, img_in, n_warmup=N_WARMUP, n_runs=N_RUNS
         )
-        times_ski_real = time_distribution(
-            skimage_pipeline_real, img_in, n_warmup=N_WARMUP, n_runs=N_RUNS
-        )
-
         times_cv_real_ms = times_cv_real * 1e3
-        times_ski_real_ms = times_ski_real * 1e3
 
         mean_cv_real = float(np.mean(times_cv_real_ms))
-        std_cv_real = float(np.std(times_cv_real_ms))
+        std_cv_real  = float(np.std(times_cv_real_ms))
 
-        mean_ski_real = float(np.mean(times_ski_real_ms))
-        std_ski_real = float(np.std(times_ski_real_ms))
-
-        # speedup based on mean seconds
-        mean_cv_real_s = float(np.mean(times_cv_real))
-        mean_ski_real_s = float(np.mean(times_ski_real))
-        speedup_real = (
-            mean_ski_real_s / mean_cv_real_s if mean_cv_real_s > 0 else float("inf")
-        )
-
-        log_print("\n=== End-to-end (Realistic) resize + internal YUV ===", f_out)
+        log_print("\n=== End-to-end (Realistic) resize + OpenCV YUV ===", f_out)
         log_print(f"{'Pipeline':<15} {'mean [ms]':>12} {'std [ms]':>12}", f_out)
         log_print("-" * 42, f_out)
         log_print(f"{'OpenCV real':<15} {mean_cv_real:12.3f} {std_cv_real:12.3f}", f_out)
-        log_print(
-            f"{'skimage real':<15} {mean_ski_real:12.3f} {std_ski_real:12.3f}", f_out
-        )
-        log_print(
-            f"\nSpeedup (skimage / OpenCV, real): {speedup_real:.1f}× slower", f_out
-        )
 
-        # ---------- 4) End-to-end (Controlled) pipelines ----------
+        # ---------- 4) End-to-end (Controlled) pipeline ----------
         times_cv_ctrl = time_distribution(
             opencv_pipeline_controlled, img_in, n_warmup=N_WARMUP, n_runs=N_RUNS
         )
-        times_ski_ctrl = time_distribution(
-            skimage_pipeline_controlled, img_in, n_warmup=N_WARMUP, n_runs=N_RUNS
-        )
-
         times_cv_ctrl_ms = times_cv_ctrl * 1e3
-        times_ski_ctrl_ms = times_ski_ctrl * 1e3
 
         mean_cv_ctrl = float(np.mean(times_cv_ctrl_ms))
-        std_cv_ctrl = float(np.std(times_cv_ctrl_ms))
+        std_cv_ctrl  = float(np.std(times_cv_ctrl_ms))
 
-        mean_ski_ctrl = float(np.mean(times_ski_ctrl_ms))
-        std_ski_ctrl = float(np.std(times_ski_ctrl_ms))
-
+        mean_cv_real_s = float(np.mean(times_cv_real))
         mean_cv_ctrl_s = float(np.mean(times_cv_ctrl))
-        mean_ski_ctrl_s = float(np.mean(times_ski_ctrl))
-        speedup_ctrl = (
-            mean_ski_ctrl_s / mean_cv_ctrl_s if mean_cv_ctrl_s > 0 else float("inf")
+        overhead_ratio = (
+            mean_cv_real_s / mean_cv_ctrl_s if mean_cv_ctrl_s > 0 else float("inf")
         )
 
-        log_print("\n=== End-to-end (Controlled) resize + COMMON YUV ===", f_out)
+        log_print("\n=== End-to-end (Controlled) resize + COMMON YUV (OpenCV) ===", f_out)
         log_print(f"{'Pipeline':<15} {'mean [ms]':>12} {'std [ms]':>12}", f_out)
         log_print("-" * 42, f_out)
         log_print(f"{'OpenCV ctrl':<15} {mean_cv_ctrl:12.3f} {std_cv_ctrl:12.3f}", f_out)
         log_print(
-            f"{'skimage ctrl':<15} {mean_ski_ctrl:12.3f} {std_ski_ctrl:12.3f}", f_out
-        )
-        log_print(
-            f"\nSpeedup (skimage / OpenCV, ctrl): {speedup_ctrl:.1f}× slower", f_out
+            f"\nOverhead (realistic / controlled, OpenCV-only): {overhead_ratio:.2f}× slower",
+            f_out,
         )
 
-        # ---------- 5) Numerical differences ----------
-        # (a) Controlled: error due to resize only (same YUV)
+        # ---------- 5) Numerical differences: real vs controlled (same resize) ----------
         yuv_cv_ctrl = opencv_pipeline_controlled(img_in)
-        yuv_ski_ctrl = skimage_pipeline_controlled(img_in)
-        g_mad_ctrl, ch_mad_ctrl = mean_abs_diff(yuv_cv_ctrl, yuv_ski_ctrl)
-
-        # (b) Realistic: error includes different YUV implementations
         yuv_cv_real = opencv_pipeline_real(img_in)
-        yuv_ski_real = skimage_pipeline_real(img_in)
-        g_mad_real, ch_mad_real = mean_abs_diff(yuv_cv_real, yuv_ski_real)
+        g_mad, ch_mad = mean_abs_diff(yuv_cv_real, yuv_cv_ctrl)
 
-        log_print("\n=== Numerical differences (YUV) ===", f_out)
+        log_print("\n=== Numerical differences (YUV, OpenCV: internal vs common) ===", f_out)
+        log_print("Difference comes from OpenCV's YUV vs fixed BT.601 matrix:", f_out)
+        log_print(f"  Global MAD: {g_mad:.6f}", f_out)
         log_print(
-            "Controlled (same YUV math, difference from resize/interpolation only):",
-            f_out,
-        )
-        log_print(f"  Global MAD: {g_mad_ctrl:.6f}", f_out)
-        log_print(
-            f"  Y: {ch_mad_ctrl[0]:.6f}, U: {ch_mad_ctrl[1]:.6f}, V: {ch_mad_ctrl[2]:.6f}",
+            f"  Y: {ch_mad[0]:.6f}, U: {ch_mad[1]:.6f}, V: {ch_mad[2]:.6f}",
             f_out,
         )
 
         log_print(
-            "\nRealistic (library YUV: OpenCV vs skimage.rgb2yuv, + dtype effects):",
-            f_out,
-        )
-        log_print(f"  Global MAD: {g_mad_real:.6f}", f_out)
-        log_print(
-            f"  Y: {ch_mad_real[0]:.6f}, U: {ch_mad_real[1]:.6f}, V: {ch_mad_real[2]:.6f}",
-            f_out,
-        )
-
-        log_print(
-            "\nOutput shapes (real pipelines): "
-            f"{yuv_cv_real.shape} {yuv_ski_real.shape}",
+            "\nOutput shapes (real vs controlled pipelines): "
+            f"{yuv_cv_real.shape} {yuv_cv_ctrl.shape}",
             f_out,
         )
 
@@ -367,23 +258,15 @@ if __name__ == "__main__":
 
         for i, t in enumerate(times_cv_resize_ms):
             writer.writerow(["resize", "opencv", i, f"{t:.6f}"])
-        for i, t in enumerate(times_ski_resize_ms):
-            writer.writerow(["resize", "skimage", i, f"{t:.6f}"])
 
         for i, t in enumerate(times_cv_yuv_ms):
             writer.writerow(["yuv", "opencv", i, f"{t:.6f}"])
-        for i, t in enumerate(times_ski_yuv_ms):
-            writer.writerow(["yuv", "skimage", i, f"{t:.6f}"])
 
         for i, t in enumerate(times_cv_real_ms):
             writer.writerow(["real", "opencv", i, f"{t:.6f}"])
-        for i, t in enumerate(times_ski_real_ms):
-            writer.writerow(["real", "skimage", i, f"{t:.6f}"])
 
         for i, t in enumerate(times_cv_ctrl_ms):
             writer.writerow(["ctrl", "opencv", i, f"{t:.6f}"])
-        for i, t in enumerate(times_ski_ctrl_ms):
-            writer.writerow(["ctrl", "skimage", i, f"{t:.6f}"])
 
     # b) Summary stats (means, std, MADs)
     with summary_csv.open("w", newline="", encoding="utf-8") as csvfile:
@@ -392,57 +275,33 @@ if __name__ == "__main__":
 
         # Resize
         writer.writerow(["mean_ms", "resize", "opencv", f"{mean_cv_r:.6f}"])
-        writer.writerow(["std_ms", "resize", "opencv", f"{std_cv_r:.6f}"])
-        writer.writerow(["mean_ms", "resize", "skimage", f"{mean_ski_r:.6f}"])
-        writer.writerow(["std_ms", "resize", "skimage", f"{std_ski_r:.6f}"])
+        writer.writerow(["std_ms",  "resize", "opencv", f"{std_cv_r:.6f}"])
 
         # YUV
         writer.writerow(["mean_ms", "yuv", "opencv", f"{mean_cv_y:.6f}"])
-        writer.writerow(["std_ms", "yuv", "opencv", f"{std_cv_y:.6f}"])
-        writer.writerow(["mean_ms", "yuv", "skimage", f"{mean_ski_y:.6f}"])
-        writer.writerow(["std_ms", "yuv", "skimage", f"{std_ski_y:.6f}"])
+        writer.writerow(["std_ms",  "yuv", "opencv", f"{std_cv_y:.6f}"])
 
         # Realistic
         writer.writerow(["mean_ms", "real", "opencv", f"{mean_cv_real:.6f}"])
-        writer.writerow(["std_ms", "real", "opencv", f"{std_cv_real:.6f}"])
-        writer.writerow(["mean_ms", "real", "skimage", f"{mean_ski_real:.6f}"])
-        writer.writerow(["std_ms", "real", "skimage", f"{std_ski_real:.6f}"])
-        writer.writerow(
-            ["speedup", "real", "skimage_over_opencv", f"{speedup_real:.6f}"]
-        )
+        writer.writerow(["std_ms",  "real", "opencv", f"{std_cv_real:.6f}"])
 
         # Controlled
         writer.writerow(["mean_ms", "ctrl", "opencv", f"{mean_cv_ctrl:.6f}"])
-        writer.writerow(["std_ms", "ctrl", "opencv", f"{std_cv_ctrl:.6f}"])
-        writer.writerow(["mean_ms", "ctrl", "skimage", f"{mean_ski_ctrl:.6f}"])
-        writer.writerow(["std_ms", "ctrl", "skimage", f"{std_ski_ctrl:.6f}"])
+        writer.writerow(["std_ms",  "ctrl", "opencv", f"{std_cv_ctrl:.6f}"])
         writer.writerow(
-            ["speedup", "ctrl", "skimage_over_opencv", f"{speedup_ctrl:.6f}"]
+            ["overhead_real_over_ctrl", "ctrl_vs_real", "opencv", f"{overhead_ratio:.6f}"]
         )
 
-        # MADs
+        # MADs (real vs controlled)
         writer.writerow(
-            ["mad_global", "controlled", "opencv_vs_skimage", f"{g_mad_ctrl:.6f}"]
+            ["mad_global", "real_vs_ctrl", "opencv", f"{g_mad:.6f}"]
         )
         writer.writerow(
-            ["mad_Y", "controlled", "opencv_vs_skimage", f"{ch_mad_ctrl[0]:.6f}"]
+            ["mad_Y", "real_vs_ctrl", "opencv", f"{ch_mad[0]:.6f}"]
         )
         writer.writerow(
-            ["mad_U", "controlled", "opencv_vs_skimage", f"{ch_mad_ctrl[1]:.6f}"]
+            ["mad_U", "real_vs_ctrl", "opencv", f"{ch_mad[1]:.6f}"]
         )
         writer.writerow(
-            ["mad_V", "controlled", "opencv_vs_skimage", f"{ch_mad_ctrl[2]:.6f}"]
-        )
-
-        writer.writerow(
-            ["mad_global", "realistic", "opencv_vs_skimage", f"{g_mad_real:.6f}"]
-        )
-        writer.writerow(
-            ["mad_Y", "realistic", "opencv_vs_skimage", f"{ch_mad_real[0]:.6f}"]
-        )
-        writer.writerow(
-            ["mad_U", "realistic", "opencv_vs_skimage", f"{ch_mad_real[1]:.6f}"]
-        )
-        writer.writerow(
-            ["mad_V", "realistic", "opencv_vs_skimage", f"{ch_mad_real[2]:.6f}"]
+            ["mad_V", "real_vs_ctrl", "opencv", f"{ch_mad[2]:.6f}"]
         )
