@@ -35,7 +35,7 @@ if __name__ == "__main__":
     mean_opencv = np.mean(times_opencv_real)
     mean_skimage = np.mean(times_skimage_real)
 
-    # ---------- Boxplot: wider boxes + short figure + 50 ms ticks + BLACK MEAN ONLY ----------
+    # ---------- Boxplot ----------
     plt.figure(figsize=(6.5, 3.0))
 
     positions = [1, 2]
@@ -44,8 +44,6 @@ if __name__ == "__main__":
         widths=0.6,
         positions=positions,
         showmeans=True,
-
-        # ✅ ONLY the mean marker is forced to black
         meanprops=dict(
             marker="x",
             markersize=6,
@@ -59,9 +57,17 @@ if __name__ == "__main__":
 
     ax = plt.gca()
     ax.yaxis.set_major_locator(MultipleLocator(50))
-    plt.grid(True)
 
-    # ---------- Mean value labels (offset left/right, not bold) ----------
+    # ✅ Horizontal grid only (no vertical grid)
+    plt.grid(axis="y")
+
+    # ✅ Remove inner border (all spines)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+
+    # ---------- Mean value labels ----------
     plt.text(
         1.35, mean_opencv,
         f"avg = {mean_opencv:.1f} ms",

@@ -1,0 +1,313 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+% The preceding line is only needed to identify funding in the first footnote. If that is unneeded, please comment it out.
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\usepackage{listings}
+\lstdefinelanguage{bash} {
+	keywords={},
+	basicstyle=\ttfamily\small,
+	keywordstyle=\color{blue}\bfseries,
+	ndkeywords={},
+	ndkeywordstyle=\color{purple}\bfseries,
+	sensitive=true,
+%	numbers=left,
+	numberstyle=\tiny\color{gray},
+	breaklines=true,
+	frame=lines,
+	backgroundcolor=\color{lightgray!10},
+	tabsize=2,
+	comment=[l]{\#},
+	morecomment=[s]{/*}{*/},
+	commentstyle=\color{gray}\ttfamily,
+	stringstyle=\color{purple}\ttfamily,
+	showstringspaces=false,
+	morestring=[s]{"}{"}
+}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+\begin{document}
+
+\title{Performance Analysis of OpenCV and Scikit-Image for 4K Processing in Consumer Electronics\\
+% {\footnotesize \textsuperscript{*}Note: Sub-titles are not captured in Xplore and
+% should not be used
+% }
+% \thanks{Identify applicable funding agency here. If none, delete this.}
+}
+
+\author{
+\IEEEauthorblockN{1\textsuperscript{st} Alfa Yohannis}
+\IEEEauthorblockA{\textit{Department of Informatics} \\
+\textit{Universitas Pradita}\\
+Tangerang, Indonesia \\
+alfa.ryano@gmail.com}
+\and
+\IEEEauthorblockN{2\textsuperscript{nd} Alexander Waworuntu}
+\IEEEauthorblockA{\textit{Department of Informatics} \\
+\textit{Universitas Multimedia Nusantara}\\
+Tangerang, Indonesia}
+\and
+\IEEEauthorblockN{3\textsuperscript{rd} Master Edison Siregar}
+\IEEEauthorblockA{\textit{Department of Informatics} \\
+\textit{Universitas Pradita}\\
+Tangerang, Indonesia}
+}
+
+
+
+%\author{
+%\IEEEauthorblockN{
+%Alfa Yohannis\IEEEauthorrefmark{1},
+%Alexander Waworuntu\IEEEauthorrefmark{2},
+%Master Edison Siregar\IEEEauthorrefmark{3}
+%}
+%\IEEEauthorblockA{
+%\IEEEauthorrefmark{1}\IEEEauthorrefmark{3}\textit{Department of Informatics}\\
+%\textit{Universitas Pradita}\\
+%Tangerang, Indonesia\\
+%\IEEEauthorrefmark{1}alfa.ryano@gmail.com
+%}
+%\IEEEauthorblockA{
+%\IEEEauthorrefmark{2}\textit{Department of Informatics}\\
+%\textit{Universitas Multimedia Nusantara}\\
+%Tangerang, Indonesia
+%}
+%}
+
+
+
+
+\maketitle
+
+\begin{abstract}
+This paper compares OpenCV and scikit-image for a 4K-to-HD preprocessing pipeline in consumer electronics under strict CPU and memory constraints. Using synthetic 4K input, controlled RGB–YUV conversion, and single-core execution, we benchmark resize-only, color-conversion-only, and end-to-end pipelines. Results show OpenCV achieves real-time 30 FPS, while scikit-image is more than ten times slower, with resizing as the dominant bottleneck. A controlled color transform reveals identical luminance but with systematic chrominance offsets, highlighting that both latency and YUV conventions must be considered in CE pipeline design.
+\end{abstract}
+
+
+\begin{IEEEkeywords}
+consumer electronics, 4k video processing, OpenCV, scikit-image, real-time performance
+\end{IEEEkeywords}
+
+
+
+
+
+\section{Introduction}
+
+Modern consumer electronics (CE) devices such as smart TVs, video surveillance systems, and embedded vision modules increasingly rely on real-time processing of 4K video streams (3840$\times$2160 resolution) for applications including live preview, on-device analytics, and video encoding. Front-end preprocessing pipelines that combine spatial downscaling to HD resolution (e.g., 640$\times$360) with RGB-to-YUV color space conversion form a critical computational bottleneck in these systems, as they must sustain 30 frames per second (FPS) under strict resource constraints including single-core execution, limited CPU utilization, and bounded memory~\cite{opencv_library,queue_realtime_cv}. While OpenCV has established itself as the de facto standard for production-grade computer vision due to its optimized C++ backends~\cite{opencv_library}, scikit-image remains popular in research and prototyping environments for its Pythonic interface and NumPy integration~\cite{van2014scikit}. However, the relative performance and numerical compatibility of these libraries remain underexplored for resource-constrained 4K CE workloads.
+
+This study aims to provide a comprehensive and reproducible performance and numerical analysis of OpenCV and scikit-image for a realistic 4K-to-HD preprocessing pipeline under tightly controlled consumer electronics constraints. The primary goal is to determine which library can sustain real-time processing while producing numerically consistent YUV outputs, isolating the impacts of spatial resizing versus color space conversion on both latency and output fidelity. The evaluation framework includes component-level benchmarking, realistic and controlled pipeline configurations, and strict resource limits to mirror consumer electronics operating environments~\cite{shah2014realtime}.
+
+This work provides a systematic performance and numerical accuracy comparison between OpenCV and scikit-image for a realistic 4K consumer electronics preprocessing pipeline. Unlike prior studies that focus solely on speed, this paper jointly analyzes end-to-end latency, component-level costs, controlled RGB--YUV conversion, and numerical output consistency under strict resource constraints. The results establish that resizing is the dominant real-time bottleneck, while library-specific chrominance definitions are the sole source of numerical mismatch. These combined findings offer practical design guidance for selecting and validating preprocessing libraries in latency-critical consumer electronics systems.
+
+
+\section{Related Work}
+\label{sec:related_work}
+
+Benchmarking and evaluation of image processing libraries for high-resolution and real-time applications have been widely studied in both academic and industrial contexts. Prior work in real-time computer vision highlights that many applications must complete per-frame processing within roughly 30--40\,ms to sustain 25--30\,FPS, motivating careful optimization of front-end operations such as resizing and color conversion~\cite{opencv_library,queue_realtime_cv}. Similarly, studies of image and video processing on general-purpose processors and embedded platforms emphasize the tight coupling between algorithm design, memory behavior, and hardware capabilities in achieving real-time performance~\cite{shah2014realtime,adve2002performance}.
+
+OpenCV has long served as the de facto standard for real-time and embedded computer vision due to its optimized C/C++ backends, SIMD support, and multicore and GPU acceleration~\cite{opencv_library,queue_realtime_cv}. Several works demonstrate that OpenCV-based pipelines can meet real-time constraints on modest hardware when interpolation and color conversion are carefully configured and hardware features are fully exploited~\cite{shah2014realtime,embedded_opencv_vision}. In contrast, scikit-image is primarily designed for research, education, and rapid prototyping in Python, prioritizing clarity and correctness over maximum throughput~\cite{van2014scikit}. Comparative studies consistently report that scikit-image is substantially slower than OpenCV for core image operations due to its reliance on high-level NumPy routines rather than hand-optimized kernels~\cite{van2014scikit}.
+
+The importance of reproducible and fair benchmarking has also been emphasized in prior studies, which stress controlled experimental setups, fixed random seeds, consistent data types, and explicit handling of warm-up effects~\cite{shah2014realtime,adve2002performance}. These works often evaluate either individual operations (e.g., filtering, resizing) or algorithm-level tasks (e.g., motion detection, background subtraction) on embedded or resource-limited platforms, but rarely address the combined impact of multiple front-end stages at 4K resolution under strict CPU and memory caps~\cite{shah2014realtime,ijtech_motion_detect}.
+
+Differences in RGB--YUV color spaces and conversion formulas across software frameworks and hardware codecs are also well documented. Technical references on video color spaces show that YUV is a family of related spaces with varying chroma offsets, scaling factors, and numeric ranges, and that such differences affect interoperability between pipelines~\cite{matrox_colorspace,ms_yuv_video,ffmpeg_colorspace}. Prior work comparing RGB and YUV representations further shows that chrominance encoding choices, including centered versus offset ranges, can introduce systematic biases in U and V channels~\cite{yuv_vs_rgb}. Despite this body of research, limited work directly contrasts OpenCV and scikit-image under a unified, tightly controlled 4K preprocessing workload with simultaneous emphasis on end-to-end latency, component-level cost attribution, and numerical equivalence. The present study addresses this gap.
+
+
+\section{Methodology}
+\label{sec:methodology}
+
+This study evaluated the performance and numerical behavior of OpenCV and scikit-image under a unified and tightly controlled experimental setup that reflects realistic consumer electronics (CE) processing constraints. All experiments implemented a preprocessing pipeline consisting of spatial resizing from 4K resolution (3840$\times$2160) to 640$\times$360 followed by RGB--YUV color space conversion. Synthetic but deterministic 4K RGB input frames were generated using a fixed random seed, ensuring identical input across all test runs and full reproducibility. All computations were performed using single-precision floating-point arithmetic (\texttt{float32}), and all intermediate outputs were explicitly cast back to \texttt{float32} after each stage to avoid mixed-precision effects.
+
+To isolate the sources of both performance and numerical differences, the evaluation was decomposed into four benchmark categories: (1) resize-only, measuring spatial interpolation cost; (2) YUV-only, measuring color conversion cost on a shared, pre-resized RGB frame; (3) end-to-end realistic pipelines, using each library’s native RGB--YUV implementation; and (4) end-to-end controlled pipelines, in which both libraries shared an identical analytic RGB--YUV conversion matrix. In the controlled configuration, a common $3\times3$ RGB--YUV transform was applied uniformly, such that any remaining numerical differences originated exclusively from the resizing/interpolation stage rather than from differing color conversion formulas.
+
+The resizing operators were configured to approximate identical interpolation behavior across both libraries. OpenCV used bilinear interpolation via \texttt{INTER\_LINEAR}, while scikit-image used \texttt{order=1} with \texttt{anti\_aliasing=false} and \texttt{preserve\_range=true} to disable smoothing and prevent implicit rescaling. For the YUV-only benchmark, a single reference 640$\times$360 RGB frame was generated once and reused by both libraries, guaranteeing strict input equivalence for the color conversion stage.
+
+To ensure stable timing measurements and eliminate initialization overhead, each experiment was executed with 20 warm-up runs followed by 100 measured runs. Warm-up runs were excluded from all statistics. Latency was recorded on a per-frame basis using the high-resolution wall-clock timer \texttt{time.perf\_counter}, and timing was restricted to the pure compute region with no file I/O inside the measurement loops. Mean latency and standard deviation were computed from the measured runs, and full per-run latency distributions spanning all benchmark categories were exported for statistical analysis and boxplot visualization.
+
+To emulate resource-constrained CE environments, execution was strictly limited using Linux process control with single-core CPU pinning, a 25\% CPU usage cap, and a 512~MB memory limit enforced via \texttt{taskset} and \texttt{systemd-run}. All executions were explicitly forced into single-threaded mode to prevent hidden parallelism. Numerical agreement was quantified using the mean absolute difference (MAD), computed in double precision for both global and per-channel (Y, U, V) metrics under controlled and realistic conditions. Performance comparison was summarized using a slowdown factor defined as the ratio between the mean scikit-image latency and the mean OpenCV latency. All experiments were conducted on Ubuntu~22.04 with an Intel Core i7 CPU and 16~GB RAM, using Python~3.10.12, NumPy~2.2.4, OpenCV~4.12.0, and scikit-image~0.25.2.
+
+
+
+
+\section{Results and Discussions}
+\label{sec:results_and_discussions}
+
+This section evaluates the performance and numerical behavior of OpenCV and scikit-image for a 4K consumer electronics preprocessing pipeline. End-to-end latency, component-level costs, and controlled RGB--YUV conversion are analyzed to assess both real-time feasibility and numerical consistency.
+
+
+\subsection{End-to-End Latency in a Realistic Consumer Electronics Pipeline}
+\label{subsec:realistic-latency}
+
+\begin{table}
+\centering
+\caption{End-to-End Latency of the Realistic Consumer Electronics Pipeline}
+\label{tab:main-performance}
+\begin{tabular}{
+p{0.25\columnwidth}
+p{0.14\columnwidth}
+p{0.06\columnwidth}
+p{0.06\columnwidth}
+}
+\hline
+\textbf{Pipeline} & \textbf{Mean (ms/frame)} & \textbf{Std (ms)} & \textbf{30 FPS} \\
+\hline
+OpenCV (real)        & 24.59  & 32.82  & Yes \\
+scikit-image (real) & 324.57 & 35.22  & No \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=\columnwidth]{figures/latency_boxplot.pdf}
+  \caption{Latency distribution of the 4K resize and RGB--YUV conversion pipeline using OpenCV and scikit-image. Boxes indicate the median and interquartile range, while X markers denote the average latency.}
+  \label{fig:latency-boxplot}
+\end{figure}
+
+Table~\ref{tab:main-performance} reports the end-to-end latency of the complete 4K consumer electronics preprocessing pipeline, consisting of spatial resizing from 4K resolution to 640$\times$360 followed by RGB--YUV color space conversion. This configuration represents a realistic front-end processing stage commonly used in camera-based CE devices such as smart TVs, video analytics modules, and embedded vision systems. The evaluation directly measures the processing time per frame under identical hardware and software constraints.
+
+A substantial performance gap is observed between the two libraries. OpenCV achieves an average latency of 24.59\,ms per frame, satisfying the real-time requirement of 30 frames per second (FPS). In contrast, scikit-image exhibits a mean processing time of 324.57\,ms per frame, exceeding the real-time budget by more than an order of magnitude. As a result, OpenCV is confirmed to be suitable for real-time CE deployment, while scikit-image is not viable for time-constrained streaming workloads under the tested configuration.
+
+Figure~\ref{fig:latency-boxplot} visualizes the latency distributions of both pipelines. OpenCV exhibits a tightly clustered distribution around the median, indicating stable and predictable frame processing. In contrast, scikit-image shows a significantly wider spread, reflecting higher execution-time variability and reduced determinism. These findings establish OpenCV as the only library capable of sustaining real-time 4K-to-HD preprocessing under realistic consumer electronics constraints and motivate the subsequent component-level and controlled analyses.
+
+
+\subsection{Component-Level Latency Analysis}
+\label{subsec:component_latency}
+
+\begin{table}
+\centering
+\caption{Component-Level Latency Breakdown}
+\label{tab:component-latency}
+\begin{tabular}{llrr}
+\hline
+\textbf{Operation} & \textbf{Library} & \textbf{Mean (ms)} & \textbf{Std (ms)} \\
+\hline
+Resize 4K $\rightarrow$ 640$\times$360 & OpenCV  & 10.063  & 22.481 \\
+Resize 4K $\rightarrow$ 640$\times$360 & scikit-image & 303.183 & 27.496 \\
+RGB $\rightarrow$ YUV 640$\times$360   & OpenCV  & 0.960  & 7.466 \\
+RGB $\rightarrow$ YUV 640$\times$360   & scikit-image & 6.005  & 17.772 \\
+\hline
+\end{tabular}
+\end{table}
+
+To better understand the origin of the large end-to-end performance gap observed in Table~\ref{tab:main-performance} and Fig.~\ref{fig:latency-boxplot}, the realistic pipeline is decomposed into its two fundamental processing stages: spatial resizing and RGB--YUV color space conversion. The measured latency of each component is reported in Table~\ref{tab:component-latency}. This breakdown enables direct attribution of the dominant computational cost to specific operations within the pipeline.
+
+The results clearly indicate that the overall performance bottleneck is dominated by the resizing operation. OpenCV performs the 4K-to-640$\times$360 resize in 10.06\,ms on average, whereas scikit-image requires 303.18\,ms for the same operation, corresponding to an approximately 30$\times$ slowdown. This single stage alone already exceeds the entire real-time budget for scikit-image, which explains its failure to achieve real-time performance in the end-to-end evaluation. In contrast, OpenCV remains within real-time constraints even when downstream processing is included.
+
+For the RGB--YUV color conversion stage, both libraries exhibit significantly lower absolute latency compared to resizing. OpenCV achieves a mean conversion time of 0.96\,ms, while scikit-image requires 6.01\,ms. Although scikit-image is approximately 6$\times$ slower in this stage, the absolute difference remains small relative to the resizing cost, indicating that color space conversion contributes only marginally to the overall delay. The higher standard deviation observed for scikit-image further indicates reduced timing stability, reinforcing that resizing—not color conversion—is the primary source of its end-to-end performance limitation.
+
+
+
+\subsection{Controlled RGB--YUV Conversion and Fair Latency Comparison}
+\label{subsec:controlled_yuv}
+
+The component-level analysis in the previous subsection established that resizing is the dominant performance bottleneck, while RGB--YUV color conversion contributes only a minor portion of the total latency. However, this performance-oriented analysis alone does not explain the numerical output differences observed between OpenCV and scikit-image in the realistic pipeline. To isolate the effect of color space conversion and ensure a fair numerical comparison, we introduce a controlled experiment in which both pipelines use the same RGB--YUV transformation.
+
+In this controlled mode, the RGB--YUV conversion is implemented using the linear transformation defined in (\ref{eq:rgb2yuv}):
+\begin{equation}
+\begin{bmatrix}
+Y \\
+U \\
+V
+\end{bmatrix}
+=
+\begin{bmatrix}
+0.29900 & 0.58700 & 0.11400 \\
+-0.14713 & -0.28886 & 0.43600 \\
+0.61500 & -0.51499 & -0.10001
+\end{bmatrix}
+\begin{bmatrix}
+R \\
+G \\
+B
+\end{bmatrix},
+\label{eq:rgb2yuv}
+\end{equation}
+which corresponds to a standard full-range YUV formulation. By enforcing this identical conversion in both pipelines, any remaining numerical differences can only originate from the resizing operation or floating-point arithmetic, rather than from library-specific YUV conventions.
+
+The end-to-end latency of this controlled pipeline is reported in Table~\ref{tab:controlled-performance}. Under this setting, OpenCV achieves a mean latency of 46.77\,ms per frame, while scikit-image requires 341.86\,ms per frame, corresponding to a slowdown factor of approximately 7.3$\times$. Although OpenCV retains a significant performance advantage, it no longer satisfies the 30~FPS real-time constraint in this controlled configuration due to the explicit matrix multiplication replacing the highly optimized \texttt{cvtColor} routine. Nevertheless, the relative slowdown of scikit-image remains dominated by the resizing stage, confirming that resizing—not color conversion—is the primary source of its end-to-end performance limitation.
+
+
+\begin{table}
+\centering
+\caption{End-to-End Latency of the Controlled Pipeline Using a Common RGB$\rightarrow$YUV Conversion}
+\label{tab:controlled-performance}
+\begin{tabular}{
+p{0.35\columnwidth}
+p{0.14\columnwidth}
+p{0.06\columnwidth}
+p{0.06\columnwidth}
+}
+\hline
+\textbf{Pipeline} & \textbf{Mean (ms/frame)} & \textbf{Std (ms)} & \textbf{30 FPS} \\
+\hline
+OpenCV (controlled)        & 46.77 & 38.41 & No \\
+scikit-image (controlled) & 341.86 & 42.03 & No \\
+\hline
+\end{tabular}
+\end{table}
+
+
+\begin{table}
+\centering
+\caption{YUV Output Differences Between OpenCV and scikit-image}
+\label{tab:yuv-differences}
+\begin{tabular}{
+p{0.07\textwidth}
+p{0.04\textwidth}
+p{0.03\textwidth}
+p{0.03\textwidth}
+p{0.03\textwidth}
+p{0.145\textwidth}
+}
+\hline
+\textbf{Mode} & \textbf{Global MAD} & \textbf{Y MAD} & \textbf{U MAD} & \textbf{V MAD} & \textbf{Cause} \\
+\hline
+Controlled (same YUV) 
+& 0.000 & 0.000 & 0.000 & 0.000 
+& No resize or color conversion difference \\
+
+Realistic (library YUV) 
+& 0.333 & 0.000 & 0.500 & 0.500 
+& Different YUV conventions and chrominance offsets \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Numerical YUV Output Differences and Chrominance Offsets}
+\label{subsec:yuv_output_differences}
+
+
+While the controlled experiment equalized the RGB--YUV conversion mathematically, the numerical agreement between OpenCV and scikit-image must still be verified explicitly. Table~\ref{tab:yuv-differences} reports the mean absolute difference (MAD) between the YUV outputs of both libraries for both the controlled and realistic pipelines. In the controlled setting, where an identical RGB--YUV transformation is enforced using (\ref{eq:rgb2yuv}), all MAD values are exactly zero across the global metric as well as the individual Y, U, and V channels. This confirms that, once the same color conversion is applied, both libraries produce numerically identical outputs, and resizing alone does not introduce any measurable discrepancy.
+
+In contrast, the realistic pipeline exhibits a non-zero global MAD of 0.333, with the discrepancy originating exclusively from the chrominance channels. The Y channel remains identical (MAD = 0.000), while both U and V channels exhibit a MAD of 0.500. This behavior is explained by the different chrominance normalization conventions used by the two libraries: OpenCV represents Y, U, and V in the normalized range $[0,1]$ for floating-point images, whereas scikit-image represents U and V in the centered range $[-0.5, +0.5]$. As a result, a systematic offset of approximately 0.5 is introduced in both chrominance channels, while the luminance component remains unchanged.
+
+From a consumer electronics system perspective, this numerical mismatch is as critical as the latency gap. Even if scikit-image were computationally fast enough, its YUV output would not be numerically interchangeable with OpenCV without explicit renormalization, which would directly impact downstream compression, transmission, and display pipelines. Taken together with the controlled latency analysis, these results establish a clear separation of concerns: spatial resizing governs real-time feasibility, while library-specific RGB--YUV definitions govern numerical compatibility. This dual constraint is fundamental for the correct design and validation of high-resolution preprocessing pipelines in consumer electronics systems.
+
+
+
+
+\section{Conclusions}
+\label{sec:conclusions}
+
+The combined performance and numerical analysis demonstrates that OpenCV is the only viable choice for real-time 4K preprocessing in consumer electronics systems under the tested constraints. Its ability to sustain 30~FPS in the realistic pipeline, together with its stable execution behavior, makes it suitable for latency-critical tasks such as live video preview, real-time encoding, and on-device vision analytics. In contrast, the extreme resizing latency of scikit-image prevents its deployment in real-time CE pipelines. Moreover, the identified chrominance offsets in the default RGB--YUV conversion further limit its numerical interchangeability with OpenCV without explicit renormalization.
+
+Future work will extend this study toward embedded and hardware-accelerated environments, including ARM-based systems and mobile devices commonly used in consumer electronics devices. Additional investigation will focus on power consumption and memory footprint under sustained 4K workloads.
+
+\section*{Acknowledgment}
+This research was supported by Universitas Pradita and Universitas Multimedia Nusantara.
+
+
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}
